@@ -110,8 +110,16 @@ export default function Dashboard({ onHome }: { onHome?: () => void }) {
     }
   }
 
-  function cancelPlan(msgId: number) {
-    setMessages((m) => m.map((x) => (x.id === msgId ? { ...x, receipt: { cancelled: true } } : x)));
+  async function cancelPlan(msgId: number, planId: string) {
+    setMessages((m) => m.map((x) => (x.id === msgId ? { ...x, executing: true } : x)));
+    try {
+      await api.cancel(planId);
+      setMessages((m) => m.map((x) => (x.id === msgId ? { ...x, executing: false, receipt: { cancelled: true } } : x)));
+    } catch (e: any) {
+      setMessages((m) => m.map((x) => (x.id === msgId ? {
+        ...x, executing: false, receipt: { ok: false, error: "Cancellation failed: " + (e?.message || "request failed") }
+      } : x)));
+    }
   }
 
   return (
@@ -375,7 +383,7 @@ function PlanCard({ msg, plan, onConfirm, onCancel }: any) {
             <div className="warn">{plan.warnings.map((w: string, i: number) => <div key={i}>⚠ {w}</div>)}</div>
           )}
           <div className="plan-actions">
-            <button className="btn ghost" disabled={msg.executing} onClick={() => onCancel(msg.id)}>Cancel</button>
+            <button className="btn ghost" disabled={msg.executing} onClick={() => onCancel(msg.id, plan.id)}>Cancel</button>
             <button
               className="btn primary"
               disabled={msg.executing || blocked}
