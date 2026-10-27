@@ -200,8 +200,8 @@ app.post("/api/ask", async (req, res) => {
       if (intent.action.kind !== "transfer") {
         throw new Error("Verigate gate currently supports only a single native POT transfer. Batch transfers and remarks are blocked.");
       }
-      if (network && network !== PORTALDOT_TESTNET_RPC) {
-        throw new Error("Verigate-gated writes are restricted to the pinned PortalDot V3 Substrate testnet. Select " + PORTALDOT_TESTNET_RPC + ".");
+      if (network && network !== PORTALDOT_TESTNET_RPC && network !== "testnet") {
+        throw new Error("Verigate-gated writes are restricted to PortalDot V3 Testnet. Select Testnet, not Mainnet or Local.");
       }
       if (process.env.VERCEL) {
         throw new Error("Verigate-gated writes are disabled on serverless deployments until a durable atomic authorization store is configured.");
