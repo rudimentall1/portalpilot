@@ -197,8 +197,8 @@ app.post("/api/ask", async (req, res) => {
       if (network && network !== PORTALDOT_TESTNET_RPC && network !== "testnet") {
         throw new Error("Verigate-gated writes are restricted to PortalDot V3 Testnet. Select Testnet, not Mainnet or Local.");
       }
-      if (process.env.VERCEL) {
-        throw new Error("Verigate-gated writes are disabled on serverless deployments until a durable atomic authorization store is configured.");
+      if (process.env.VERCEL || process.env.VERIGATE_SINGLE_PROCESS_MODE !== "true") {
+        throw new Error("Verigate-gated writes require explicit VERIGATE_SINGLE_PROCESS_MODE=true on a single-process local deployment; serverless and unconfirmed multi-instance deployments are disabled.");
       }
       const gatedNetwork = PORTALDOT_TESTNET_RPC;
       const transactionSeed = String(process.env.PORTALDOT_SIGNER_SEED || "").trim();
@@ -286,8 +286,8 @@ app.post("/api/execute", async (req, res) => {
   try {
     const planId = String(req.body?.planId || "");
     if (!planId) return res.status(400).json({ error: "missing planId" });
-    if (process.env.VERCEL) {
-      throw new Error("Verigate-gated writes are disabled on serverless deployments until a durable atomic authorization store is configured.");
+    if (process.env.VERCEL || process.env.VERIGATE_SINGLE_PROCESS_MODE !== "true") {
+      throw new Error("Verigate-gated writes require explicit VERIGATE_SINGLE_PROCESS_MODE=true on a single-process local deployment; serverless and unconfirmed multi-instance deployments are disabled.");
     }
     // Consume the authorization before any asynchronous work. Refusals burn the
     // one-time approval, preventing replay attempts in this process.
