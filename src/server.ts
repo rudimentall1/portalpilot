@@ -207,6 +207,10 @@ app.post("/api/ask", async (req, res) => {
         throw new Error("Verigate-gated writes are disabled on serverless deployments until a durable atomic authorization store is configured.");
       }
       const gatedNetwork = PORTALDOT_TESTNET_RPC;
+      const transactionSeed = String(process.env.PORTALDOT_SIGNER_SEED || "").trim();
+      if (!transactionSeed || transactionSeed.startsWith("//")) {
+        throw new Error("Set PORTALDOT_SIGNER_SEED to a funded, non-development PortalDot V3 testnet account. Built-in //Alice-style dev keys are refused.");
+      }
 
       // Verify Verigate's signed decision + execution authorization before planAction(),
       // which signs the Substrate extrinsic.
