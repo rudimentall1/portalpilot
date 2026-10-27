@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   canonicalJson,
+  consumeExecutionAuthorization,
   requestAndVerifyAuthorization,
 } from "../src/verigate.ts";
 
@@ -19,6 +20,7 @@ function sign(payload: unknown, key: crypto.KeyObject): string {
 async function withMockVerigate(
   mode: "allow" | "deny" | "mutate-action",
   run: () => Promise<void>,
+  consumeAllowed = true,
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "portalpilot-verigate-test-"));
   const issuer = crypto.generateKeyPairSync("ed25519");
@@ -58,6 +60,10 @@ async function withMockVerigate(
   (globalThis as any).fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/verify")) return new Response(JSON.stringify({ valid: true, reason: "test verifier" }), { status: 200 });
+    if (url.endsWith("/v1/execution/consume")) return new Response(JSON.stringify({
+      execute: consumeAllowed,
+      reason: consumeAllowed ? "execution authorization consumed" : "execution authorization already consumed",
+    }), { status: 200 });
     if (!url.endsWith("/v1/actions/authorize")) return new Response("not found", { status: 404 });
     const request = JSON.parse(String(init?.body));
     const amount = request.amount_exact;
@@ -148,7 +154,18 @@ test("accepts a signed Verigate ALLOW bound to the exact recipient and amount", 
     assert.equal(result.amountBaseUnits, "25000000000000");
     assert.equal(result.maxFeeBaseUnits, "5000000000");
     assert.ok(result.expiresAt > Math.floor(Date.now() / 1000));
+    await consumeExecutionAuthorization(result.executionAuthorization);
   });
+});
+
+test("fails closed when Verigate refuses one-time execution consumption", async () => {
+  await withMockVerigate("allow", async () => {
+    const result = await requestAndVerifyAuthorization({ to: recipient, amountPot: "0.25" });
+    await assert.rejects(
+      consumeExecutionAuthorization(result.executionAuthorization),
+      /Verigate refused one-time execution consumption: execution authorization already consumed/,
+    );
+  }, false);
 });
 
 test("fails closed when Verigate returns BLOCK", async () => {
