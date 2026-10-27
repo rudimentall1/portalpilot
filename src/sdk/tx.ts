@@ -337,6 +337,10 @@ export async function estimateFee(action: WriteAction, network?: string) {
   };
 }
 
+export function discardPlan(id: string): boolean {
+  return planCache.delete(id);
+}
+
 export function planCount(): number {
   return planCache.size;
 }
