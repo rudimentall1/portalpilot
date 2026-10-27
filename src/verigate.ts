@@ -10,17 +10,116 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
-function canonicalJson(value: unknown): string {
+const numericLexemes = new WeakMap<object, Map<string, string>>();
+const rawJsonValues = new WeakMap<object, string>();
+
+function canonicalJson(value: unknown, parent: object | null = null, parentKey: string | number | null = null): string {
   if (value === null || typeof value !== "object") {
-    const encoded = JSON.stringify(value);
+    const rawNumber = typeof value === "number" && parent !== null && parentKey !== null
+      ? numericLexemes.get(parent)?.get(String(parentKey))
+      : undefined;
+    const encoded = rawNumber ?? JSON.stringify(value);
     if (encoded === undefined) fail("Value cannot be represented as canonical JSON.");
     return encoded;
   }
-  if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
+  if (Array.isArray(value)) {
+    return "[" + value.map((item, index) => canonicalJson(item, value, index)).join(",") + "]";
+  }
   const record = value as Record<string, unknown>;
   return "{" + Object.keys(record).sort().map((key) =>
-    JSON.stringify(key) + ":" + canonicalJson(record[key])
+    JSON.stringify(key) + ":" + canonicalJson(record[key], record, key)
   ).join(",") + "}";
+}
+
+// Preserve the exact JSON spelling of numeric values from signed Verigate artifacts.
+// Python's json.dumps may emit 1.0 while JSON.parse/JSON.stringify in JavaScript emits 1.
+function parseJsonPreservingNumbers(source: string): any {
+  const text = String(source);
+  let index = 0;
+  const whitespace = () => {
+    while (index < text.length && /[ \t\n\r]/.test(text[index])) index++;
+  };
+  const parseString = () => {
+    const start = index;
+    if (text[index] !== '"') fail("Malformed JSON string.");
+    index++;
+    while (index < text.length) {
+      if (text.charCodeAt(index) === 92) { index += 2; continue; }
+      if (text[index] === '"') {
+        index++;
+        return JSON.parse(text.slice(start, index));
+      }
+      index++;
+    }
+    fail("Unterminated JSON string.");
+  };
+  const remember = (parent: object, key: string | number, child: { value: any; numberRaw?: string }) => {
+    if (child.numberRaw === undefined) return;
+    let entries = numericLexemes.get(parent);
+    if (!entries) { entries = new Map(); numericLexemes.set(parent, entries); }
+    entries.set(String(key), child.numberRaw);
+  };
+  const parseValue = (): { value: any; numberRaw?: string } => {
+    whitespace();
+    const start = index;
+    const ch = text[index];
+    if (ch === '"') return { value: parseString() };
+    if (ch === '{') {
+      index++;
+      const obj: Record<string, any> = {};
+      whitespace();
+      if (text[index] === '}') index++;
+      else {
+        while (index < text.length) {
+          whitespace();
+          const key = parseString();
+          whitespace();
+          if (text[index++] !== ':') fail("Malformed JSON object: expected colon.");
+          const child = parseValue();
+          Object.defineProperty(obj, key, { value: child.value, enumerable: true, writable: true, configurable: true });
+          remember(obj, key, child);
+          whitespace();
+          if (text[index] === '}') { index++; break; }
+          if (text[index++] !== ',') fail("Malformed JSON object: expected comma.");
+        }
+      }
+      rawJsonValues.set(obj, text.slice(start, index));
+      return { value: obj };
+    }
+    if (ch === '[') {
+      index++;
+      const arr: any[] = [];
+      whitespace();
+      if (text[index] === ']') index++;
+      else {
+        while (index < text.length) {
+          const child = parseValue();
+          arr.push(child.value);
+          remember(arr, arr.length - 1, child);
+          whitespace();
+          if (text[index] === ']') { index++; break; }
+          if (text[index++] !== ',') fail("Malformed JSON array: expected comma.");
+        }
+      }
+      rawJsonValues.set(arr, text.slice(start, index));
+      return { value: arr };
+    }
+    const literal = text.slice(index).match(/^(true|false|null)/);
+    if (literal) {
+      index += literal[0].length;
+      return { value: literal[0] === "true" ? true : literal[0] === "false" ? false : null };
+    }
+    const numeric = text.slice(index).match(/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/);
+    if (numeric) {
+      index += numeric[0].length;
+      return { value: Number(numeric[0]), numberRaw: numeric[0] };
+    }
+    fail("Malformed JSON value.");
+  };
+  const parsed = parseValue();
+  whitespace();
+  if (index !== text.length) fail("Unexpected trailing content after JSON value.");
+  return parsed.value;
 }
 
 function digest(value: unknown): string {
@@ -92,7 +191,9 @@ async function verifyRemotely(attestation: unknown): Promise<void> {
       "content-type": "application/json",
       ...(process.env.VERIGATE_API_KEY ? { "x-api-key": process.env.VERIGATE_API_KEY } : {}),
     },
-    body: JSON.stringify(attestation),
+    body: rawJsonValues.has((attestation as any)?.payload)
+      ? `{"payload":${rawJsonValues.get((attestation as any).payload)},"signature":${JSON.stringify((attestation as any).signature)},"algorithm":${JSON.stringify((attestation as any).algorithm)}}`
+      : JSON.stringify(attestation),
     signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) fail("Verigate verifier returned HTTP " + response.status + ".");
@@ -200,7 +301,7 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
     signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) fail("Verigate /v1/actions/authorize returned HTTP " + response.status + ".");
-  const artifacts: any = await response.json();
+  const artifacts: any = parseJsonPreservingNumbers(await response.text());
   const receipt = artifacts?.decision_receipt;
   const authorization = artifacts?.execution_authorization;
   if (!receipt?.payload) fail("Verigate response must contain a signed decision receipt.");
