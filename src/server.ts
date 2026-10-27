@@ -227,13 +227,20 @@ app.post("/api/ask", async (req, res) => {
 
       const plan = await planAction(intent.action, gatedNetwork);
       if (plan.callHex.toLowerCase() !== expectedCallHex.toLowerCase()) {
+        discardPlan(plan.id);
         throw new Error("PortalPilot signed a different SCALE call than Verigate authorized; refusing to return the plan.");
       }
       if (BigInt(plan.feePlanck) > BigInt(authorization.maxFeeBaseUnits) ||
           plan.warnings.some((warning) => /Fee estimate unavailable/i.test(warning))) {
+        discardPlan(plan.id);
         throw new Error("PortalPilot fee estimate is unavailable or exceeds the signed Verigate fee ceiling.");
       }
+      if (plan.dryRun.ran && !plan.dryRun.ok) {
+        discardPlan(plan.id);
+        throw new Error("PortalPilot dry-run predicts that this authorized transaction will fail: " + plan.dryRun.detail);
+      }
       if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
+        discardPlan(plan.id);
         throw new Error("Verigate authorization expired while PortalPilot was preparing the plan.");
       }
 
