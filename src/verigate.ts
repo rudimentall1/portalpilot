@@ -213,7 +213,9 @@ export interface VerifiedAuthorization {
 }
 
 export async function requestAndVerifyAuthorization(action: { to: string; amountPot: string }): Promise<VerifiedAuthorization> {
-  if (process.env.VERCEL) fail("Verigate-gated writes are disabled on serverless deployments until a durable atomic authorization store is configured.");
+  if (process.env.VERCEL || process.env.VERIGATE_SINGLE_PROCESS_MODE !== "true") {
+    fail("Verigate-gated writes require explicit VERIGATE_SINGLE_PROCESS_MODE=true on a single-process local deployment; serverless and unconfirmed multi-instance deployments are disabled.");
+  }
   const base = normalizeBaseUrl(process.env.VERIGATE_BASE_URL || "");
   const identityId = String(process.env.VERIGATE_IDENTITY_ID || "");
   const capabilityId = String(process.env.VERIGATE_CAPABILITY_ID || "");
