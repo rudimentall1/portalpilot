@@ -19,5 +19,6 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npx tsc --noEmit
+      - run: npm run test:verigate
       - run: npm --prefix app ci
       - run: npm --prefix app run build
