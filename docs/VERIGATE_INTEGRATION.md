@@ -11,10 +11,10 @@
 This is a local single-process integration spike, not production-ready authorization infrastructure.
 
 - The authorization map is process-local. The gate explicitly refuses writes when `VERCEL` is set. Multi-instance deployments need a durable shared store with atomic `putIfAbsent` and `take` semantics before writes can be enabled.
-- `VERIGATE_AUTHORIZATION_URL` is an operator-provided trusted adapter endpoint. It must create the intent through the supported Verigate workflow and return both signed artifacts as `{ "decision_receipt": ..., "execution_authorization": ... }`. This repository does not claim that a built-in endpoint with this contract already exists.
+- Authorization is requested from Verigate's existing `POST /v1/actions/authorize` endpoint. Configure an active registered `VERIGATE_AGENT_ID`, `VERIGATE_IDENTITY_ID`, and `VERIGATE_CAPABILITY_ID`; the agent private key must match the registered identity and is used server-side to sign the exact ActionIntent.
 - Configure `VERIGATE_PUBLIC_KEY_FILE` and independently pin its SPKI DER SHA-256 in `VERIGATE_PUBLIC_KEY_SHA256`. The remote `/v1/verify` check is additional validation, not a substitute for local signature verification.
 - `VERIGATE_MAX_FEE_BASE_UNITS` must be a positive integer in POT base units (14 decimals), and the same exact value must be present in the signed intent and authorization.
-- `PORTALDOT_SIGNER_SEED` is the PortalPilot Substrate transaction signer. It is distinct from Verigate's Ed25519 issuer key and must remain server-side. Never expose either private key to the browser.
+- `VERIGATE_AGENT_PRIVATE_KEY_FILE` is the agent identity key used to sign the intent; `VERIGATE_PUBLIC_KEY_FILE` is the Verigate issuer key used to verify returned artifacts. `PORTALDOT_SIGNER_SEED` is PortalPilot's Substrate transaction signer. These are three distinct keys and all remain server-side. Never expose them to the browser.
 - The endpoint and genesis hash are pinned to the recorded PortalDot V3 Substrate testnet. No mainnet write path is enabled by this gate.
 
 ## Verification still required
