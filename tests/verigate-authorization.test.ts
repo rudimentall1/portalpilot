@@ -46,6 +46,7 @@ async function withMockVerigate(
     VERIGATE_PUBLIC_KEY_SHA256: issuerFingerprint,
     VERIGATE_MAX_FEE_BASE_UNITS: "5000000000",
     VERCEL: undefined,
+    VERIGATE_SINGLE_PROCESS_MODE: "true",
   };
   for (const [key, value] of Object.entries(env)) {
     oldEnv[key] = process.env[key];
