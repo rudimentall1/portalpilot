@@ -10,7 +10,7 @@
 
 This is a local single-process integration spike, not production-ready authorization infrastructure.
 
-- The authorization map is process-local. The gate explicitly refuses writes when `VERCEL` is set. Multi-instance deployments need a durable shared store with atomic `putIfAbsent` and `take` semantics before writes can be enabled.
+- The authorization map is process-local. Writes require `VERIGATE_SINGLE_PROCESS_MODE=true` and are refused on Vercel/serverless. Set the opt-in only when running one local server process. Multi-instance deployments need a durable shared store with atomic `putIfAbsent` and `take` semantics before writes can be enabled.
 - Verigate's `/v1/execution/consume` router currently has no PortalDot Substrate network adapter. This branch therefore does not claim Verigate-side durable nonce consumption; replay protection is process-local until a supported Substrate execution adapter or equivalent durable consumption contract is added.
 - Authorization is requested from Verigate's existing `POST /v1/actions/authorize` endpoint. Configure an active registered `VERIGATE_AGENT_ID`, `VERIGATE_IDENTITY_ID`, and `VERIGATE_CAPABILITY_ID`; the agent private key must match the registered identity and is used server-side to sign the exact ActionIntent.
 - Configure `VERIGATE_PUBLIC_KEY_FILE` and independently pin its SPKI DER SHA-256 in `VERIGATE_PUBLIC_KEY_SHA256`. The remote `/v1/verify` check is additional validation, not a substitute for local signature verification.
