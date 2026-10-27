@@ -14,7 +14,7 @@ import { requestAndVerifyAuthorization } from "./verigate";
 import { shortAddr } from "./sdk/format";
 import { understand, hasLLM } from "./intent/index";
 import { DEV_ADDRESSES } from "./intent/types";
-import { flipperAvailable, deployFlipper, flipFlipper, readFlipper } from "./sdk/contracts";
+import { readFlipper } from "./sdk/contracts";
 
 // Quiet two benign @polkadot/api init warnings so demo logs stay clean.
 const _warn = console.warn.bind(console);
