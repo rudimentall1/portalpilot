@@ -4,7 +4,7 @@ import { canonicalJson, parseJsonPreservingNumbers, potToBaseUnits } from "../sr
 
 test("canonical JSON preserves Python integral-float spellings from signed artifacts", () => {
   const parsed = parseJsonPreservingNumbers('{"payload":{"n":1.0,"nested":[2.00,3e0]}}');
-  assert.equal(canonicalJson(parsed.payload), '{"nested":[2.00,3e0],"n":1.0}');
+  assert.equal(canonicalJson(parsed.payload), '{"n":1.0,"nested":[2.00,3e0]}');
 });
 
 test("canonical JSON sorts keys recursively and does not add whitespace", () => {
