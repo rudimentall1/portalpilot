@@ -4,7 +4,7 @@
 
 - `POST /api/ask`: write intents are limited to one native POT transfer. The route obtains and locally verifies Verigate's signed decision receipt and execution authorization, verifies both with the configured Verigate verifier, binds recipient, amount, network, genesis, and fee ceiling, and compares the unsigned SCALE call before calling `planAction()` (which signs the extrinsic).
 - `POST /api/execute`: consumes the in-process one-time authorization before asynchronous work, checks expiry, then submits only the cached extrinsic whose method bytes match the authorized call. Expiry is checked again immediately before submission.
-- Batch transfers, remarks, non-testnet writes, missing configuration, invalid signatures, verifier failures, changed call bytes, expired authorizations, and fee estimates above the signed ceiling fail closed.
+- Batch transfers, remarks, ink! contract deployment/writes, non-testnet writes, missing configuration, invalid signatures, verifier failures, changed call bytes, expired authorizations, and fee estimates above the signed ceiling fail closed.
 
 ## Important deployment limits
 
@@ -19,7 +19,7 @@ This is a local single-process integration spike, not production-ready authoriza
 
 ## Verification still required
 
-GitHub Actions runs `npx tsc --noEmit`, the focused `test:verigate` suite, and the frontend production build. Those checks do not establish live authorization or transaction behavior. Before treating this as end-to-end integrated, configure the server-side keys and Verigate identity/capability, then run locally:
+GitHub Actions runs `npx tsc --noEmit`, the `test:verigate` suite (canonicalization, signed ALLOW/BLOCK and tamper cases, plus route-level regressions for contract-write bypass), and the frontend production build. Those checks do not establish live authorization or transaction behavior. Before treating this as end-to-end integrated, configure the server-side keys and Verigate identity/capability, then run locally:
 
 ```sh
 npm install
