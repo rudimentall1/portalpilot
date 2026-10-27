@@ -210,6 +210,7 @@ export interface VerifiedAuthorization {
   actionSha256: string;
   expiresAt: number;
   expectedGenesisHash: string;
+  executionAuthorization: { payload: Record<string, unknown>; signature: string; algorithm: "Ed25519" };
 }
 
 export async function requestAndVerifyAuthorization(action: { to: string; amountPot: string }): Promise<VerifiedAuthorization> {
@@ -377,7 +378,33 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
     actionSha256: digest(signedAction),
     expiresAt,
     expectedGenesisHash: PORTALDOT_TESTNET_GENESIS,
+    executionAuthorization: authorization,
   };
+}
+
+export async function consumeExecutionAuthorization(
+  executionAuthorization: VerifiedAuthorization["executionAuthorization"],
+): Promise<void> {
+  const base = normalizeBaseUrl(process.env.VERIGATE_BASE_URL || "");
+  const rawAuthorization = rawJsonValues.get(executionAuthorization as object);
+  const body = rawAuthorization
+    ? `{"authorization":${rawAuthorization}}`
+    : JSON.stringify({ authorization: executionAuthorization });
+  const response = await fetch(new URL("/v1/execution/consume", base), {
+    method: "POST",
+    redirect: "error",
+    headers: {
+      "content-type": "application/json",
+      ...(process.env.VERIGATE_API_KEY ? { "x-api-key": process.env.VERIGATE_API_KEY } : {}),
+    },
+    body,
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) fail("Verigate execution-consume endpoint returned HTTP " + response.status + ".");
+  const result: any = await response.json();
+  if (result?.execute !== true) {
+    fail("Verigate refused one-time execution consumption: " + String(result?.reason || "no reason returned") + ".");
+  }
 }
 
 function positiveRecipient(value: unknown): string {
