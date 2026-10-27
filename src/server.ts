@@ -168,16 +168,10 @@ app.post("/api/ask", async (req, res) => {
         res.json({ kind: "read", intent: { type: "read", engine: "rules" }, answer: a, view: "none", data });
       try {
         if (/\b(deploy|instantiate|launch|create|new)\b/.test(lc0)) {
-          if (!flipperAvailable())
-            return say(
-              "ink! deploy is wired to this node's legacy pallet-contracts (rent-based, weights-v1). Drop an ink! ~3.0-compatible build at contracts/flipper/ (flipper.contract, or flipper.wasm + flipper.json), then say “deploy flipper” again. Note: a modern ink! 5 build would be rejected by this node."
-            );
-          const d = await deployFlipper(network);
-          return say(`Deployed the flipper ink! contract on Portaldot at ${d.address} (block ${d.block.slice(0, 12)}…). Now try “flip the contract” or “read the flipper”.`, d);
+          throw new Error("Verigate integration blocks ink! contract deployment: only a single native POT transfer is currently supported by the authorization gate.");
         }
         if (/\bflip\b/.test(lc0)) {
-          const f = await flipFlipper(network);
-          return say(`Flipped the contract — block ${f.block.slice(0, 12)}…. Say “read the flipper” to see the new value.`, f);
+          throw new Error("Verigate integration blocks ink! contract writes: only a single native POT transfer is currently supported by the authorization gate.");
         }
         if (/\b(read|get|value|state|current|show)\b/.test(lc0)) {
           const v = await readFlipper(network);
