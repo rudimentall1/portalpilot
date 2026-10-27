@@ -321,9 +321,12 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
   const signedAction = ap.action;
   if (!intent || !decision || !signedAction) fail("Verigate artifacts are missing intent, decision, or action.");
   if (decision.decision !== "ALLOW") fail("Verigate denied this action.");
-  if (decision.intent_id !== intent.intent_id || decision.agent_id !== intent.agent_id ||
-      ap.intent_id !== intent.intent_id || ap.agent_id !== intent.agent_id || ap.nonce !== intent.intent_id) {
-    fail("Verigate receipt and authorization identity bindings do not match.");
+  if (intent.intent_id !== intentId || intent.agent_id !== agentId ||
+      decision.intent_id !== intent.intent_id || decision.agent_id !== intent.agent_id ||
+      ap.intent_id !== intent.intent_id || ap.agent_id !== intent.agent_id ||
+      ap.identity_id !== identityId || ap.capability_id !== capabilityId ||
+      ap.nonce !== intent.intent_id) {
+    fail("Verigate receipt and authorization do not match the requested intent, agent, identity, and capability.");
   }
   const expectedId = crypto.createHash("sha256").update(String(receipt.signature) + String(ap.nonce)).digest("hex");
   if (String(ap.authorization_id || "").toLowerCase() !== expectedId) fail("Verigate authorization ID mismatch.");
