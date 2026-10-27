@@ -66,6 +66,8 @@ async function withMockVerigate(
     }), { status: 200 });
     if (!url.endsWith("/v1/actions/authorize")) return new Response("not found", { status: 404 });
     const request = JSON.parse(String(init?.body));
+    assert.equal(request.amount_exact, "0.25", "Verigate policy amount must be expressed in human POT units");
+    assert.equal(request.metadata?.portaldot_substrate_v3?.amount_base_units, "25000000000000");
     const amount = request.amount_exact;
     const intent = {
       intent_id: request.intent_id,
