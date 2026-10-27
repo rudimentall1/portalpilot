@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { getChainInfo, getAccount, recentBlocks, recentTransfers, NETWORKS } from "./sdk/index";
 import {
   planAction, executePlan, estimateFee, encodeUnsignedTransferCallHex,
-  executeAuthorizedPlan, PORTALDOT_TESTNET_RPC,
+  executeAuthorizedPlan, discardPlan, PORTALDOT_TESTNET_RPC,
 } from "./sdk/tx";
 import { requestAndVerifyAuthorization } from "./verigate";
 import { shortAddr } from "./sdk/format";
@@ -266,6 +266,15 @@ app.post("/api/ask", async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: errMsg(e) });
   }
+});
+
+app.post("/api/cancel", (req, res) => {
+  const planId = String(req.body?.planId || "");
+  if (!planId) return res.status(400).json({ error: "missing planId" });
+  // Cancellation consumes the authorization and discards the cached signed extrinsic.
+  verigatePlans.delete(planId);
+  discardPlan(planId);
+  return res.json({ ok: true, cancelled: true });
 });
 
 app.post("/api/execute", async (req, res) => {
