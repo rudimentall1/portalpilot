@@ -234,7 +234,8 @@ export async function encodeUnsignedTransferCallHex(
  */
 export async function executeAuthorizedPlan(
   id: string,
-  expectedCallHex: string
+  expectedCallHex: string,
+  expiresAt?: number
 ): Promise<Receipt> {
   if (typeof expectedCallHex !== "string" || !/^0x[0-9a-f]+$/i.test(expectedCallHex)) {
     throw new Error("A canonical expected SCALE call is required.");
@@ -242,6 +243,9 @@ export async function executeAuthorizedPlan(
   const cached = planCache.get(id);
   if (!cached) throw new Error("Plan expired or not found. Please re-issue the command.");
   const api = await getApi(cached.network === "default" ? undefined : cached.network);
+  if (expiresAt !== undefined && (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000))) {
+    throw new Error("Verigate authorization expired immediately before submission; refusing execution.");
+  }
   const current = planCache.get(id);
   if (!current || current.tx !== cached.tx) {
     throw new Error("Plan changed while authorization was being checked; refusing execution.");
