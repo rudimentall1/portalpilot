@@ -10,7 +10,7 @@ import {
   planAction, executePlan, estimateFee, encodeUnsignedTransferCallHex,
   executeAuthorizedPlan, discardPlan, PORTALDOT_TESTNET_RPC,
 } from "./sdk/tx";
-import { requestAndVerifyAuthorization } from "./verigate";
+import { requestAndVerifyAuthorization, consumeExecutionAuthorization } from "./verigate";
 import { shortAddr } from "./sdk/format";
 import { understand, hasLLM } from "./intent/index";
 import { DEV_ADDRESSES } from "./intent/types";
@@ -37,6 +37,7 @@ const verigatePlans = new Map<string, {
   authorizationId: string;
   expiresAt: number;
   planCreatedAt: number;
+  executionAuthorization: { payload: Record<string, unknown>; signature: string; algorithm: "Ed25519" };
 }>();
 
 const errMsg = (e: any) => e?.message || String(e);
@@ -251,6 +252,7 @@ app.post("/api/ask", async (req, res) => {
         authorizationId: authorization.authorizationId,
         expiresAt: authorization.expiresAt,
         planCreatedAt: plan.createdAt,
+        executionAuthorization: authorization.executionAuthorization,
       });
       return res.json({ kind: "plan", intent, plan, verigate: {
         decision: "ALLOW",
@@ -297,6 +299,9 @@ app.post("/api/execute", async (req, res) => {
     if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
       throw new Error("Verigate authorization expired; the one-time approval has been consumed.");
     }
+    // Consume the signed authorization in Verigate's durable nonce store before any broadcast.
+    // If the endpoint is unavailable or rejects the authorization, fail closed without submitting.
+    await consumeExecutionAuthorization(authorization.executionAuthorization);
     res.json(await executeAuthorizedPlan(planId, authorization.expectedCallHex, authorization.expiresAt));
   } catch (e) {
     res.status(400).json({ error: errMsg(e) });
