@@ -14,16 +14,17 @@ This is a local single-process integration spike, not production-ready authoriza
 - Authorization is requested from Verigate's existing `POST /v1/actions/authorize` endpoint. Configure an active registered `VERIGATE_AGENT_ID`, `VERIGATE_IDENTITY_ID`, and `VERIGATE_CAPABILITY_ID`; the agent private key must match the registered identity and is used server-side to sign the exact ActionIntent.
 - Configure `VERIGATE_PUBLIC_KEY_FILE` and independently pin its SPKI DER SHA-256 in `VERIGATE_PUBLIC_KEY_SHA256`. The remote `/v1/verify` check is additional validation, not a substitute for local signature verification.
 - `VERIGATE_MAX_FEE_BASE_UNITS` must be a positive integer in POT base units (14 decimals), and the same exact value must be present in the signed intent and authorization.
-- `VERIGATE_AGENT_PRIVATE_KEY_FILE` is the agent identity key used to sign the intent; `VERIGATE_PUBLIC_KEY_FILE` is the Verigate issuer key used to verify returned artifacts. `PORTALDOT_SIGNER_SEED` is PortalPilot's Substrate transaction signer. These are three distinct keys and all remain server-side. Never expose them to the browser.
+- `VERIGATE_AGENT_PRIVATE_KEY_FILE` is the agent identity key used to sign the intent; `VERIGATE_PUBLIC_KEY_FILE` is the Verigate issuer key used to verify returned artifacts. `PORTALDOT_SIGNER_SEED` is PortalPilot's Substrate transaction signer. Gated writes reject a missing seed and well-known `//Alice`-style development URIs. These are three distinct keys and all remain server-side. Never expose them to the browser.
 - The endpoint and genesis hash are pinned to the recorded PortalDot V3 Substrate testnet. No mainnet write path is enabled by this gate.
 
 ## Verification still required
 
-The GitHub API connector used to author this branch does not run the repository's TypeScript compiler or execute its tests. Before treating this as integrated, run locally:
+GitHub Actions runs `npx tsc --noEmit`, the focused `test:verigate` suite, and the frontend production build. Those checks do not establish live authorization or transaction behavior. Before treating this as end-to-end integrated, configure the server-side keys and Verigate identity/capability, then run locally:
 
 ```sh
 npm install
 npx tsc --noEmit
+npm run test:verigate
 npm run server
 ```
 
