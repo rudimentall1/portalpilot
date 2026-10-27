@@ -187,6 +187,7 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
     fail("Requested amount differs from signed Verigate amount.");
   }
   const maxFeeBaseUnits = positiveInteger(map.max_fee_base_units, "signed fee ceiling");
+  if (maxFeeBaseUnits !== configuredFeeCeiling) fail("Signed fee ceiling differs from the configured PortalPilot fee ceiling.");
   if (positiveInteger(intentMap.max_fee_base_units, "intent fee ceiling") !== maxFeeBaseUnits) {
     fail("Signed fee ceilings do not match.");
   }
