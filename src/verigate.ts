@@ -133,7 +133,7 @@ function positiveInteger(value: unknown, label: string): string {
   return value;
 }
 
-function potToBaseUnits(value: string): string {
+export function potToBaseUnits(value: string): string {
   if (!/^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,14})?$/.test(value)) {
     fail("POT amount must be a canonical decimal string with at most 14 fractional digits.");
   }
@@ -379,3 +379,5 @@ function positiveRecipient(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) fail("Recipient must be a non-empty SS58 address.");
   return value.trim();
 }
+
+export { canonicalJson, parseJsonPreservingNumbers };
