@@ -6,7 +6,11 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { getChainInfo, getAccount, recentBlocks, recentTransfers, NETWORKS } from "./sdk/index";
-import { planAction, executePlan, estimateFee } from "./sdk/tx";
+import {
+  planAction, executePlan, estimateFee, encodeUnsignedTransferCallHex,
+  executeAuthorizedPlan, PORTALDOT_TESTNET_RPC,
+} from "./sdk/tx";
+import { requestAndVerifyAuthorization } from "./verigate";
 import { shortAddr } from "./sdk/format";
 import { understand, hasLLM } from "./intent/index";
 import { DEV_ADDRESSES } from "./intent/types";
@@ -25,6 +29,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 const PORT = Number(process.env.PORT || 8787);
+
+// Process-local, one-time bindings. The Verigate gate explicitly refuses Vercel/serverless
+// because this Map is not a durable atomic store across instances or restarts.
+const verigatePlans = new Map<string, {
+  expectedCallHex: string;
+  authorizationId: string;
+  expiresAt: number;
+  planCreatedAt: number;
+}>();
 
 const errMsg = (e: any) => e?.message || String(e);
 
@@ -182,8 +195,64 @@ app.post("/api/ask", async (req, res) => {
       return res.json({ kind: "read", intent, ...r });
     }
     if (intent.type === "write") {
-      const plan = await planAction(intent.action, network);
-      return res.json({ kind: "plan", intent, plan });
+      // The current Verigate adapter authorizes only one native POT transfer.
+      // Other writes fail closed rather than falling back to the unguarded planner.
+      if (intent.action.kind !== "transfer") {
+        throw new Error("Verigate gate currently supports only a single native POT transfer. Batch transfers and remarks are blocked.");
+      }
+      if (network && network !== PORTALDOT_TESTNET_RPC) {
+        throw new Error("Verigate-gated writes are restricted to the pinned PortalDot V3 Substrate testnet. Select " + PORTALDOT_TESTNET_RPC + ".");
+      }
+      if (process.env.VERCEL) {
+        throw new Error("Verigate-gated writes are disabled on serverless deployments until a durable atomic authorization store is configured.");
+      }
+      const gatedNetwork = PORTALDOT_TESTNET_RPC;
+
+      // Verify Verigate's signed decision + execution authorization before planAction(),
+      // which signs the Substrate extrinsic.
+      const authorization = await requestAndVerifyAuthorization(intent.action);
+      const expectedCallHex = await encodeUnsignedTransferCallHex(
+        authorization.recipient, authorization.amountBaseUnits, gatedNetwork
+      );
+      const requestedCallHex = await encodeUnsignedTransferCallHex(
+        intent.action.to,
+        // Use the signed base-unit amount so the exact encoded call is compared.
+        authorization.amountBaseUnits,
+        gatedNetwork
+      );
+      if (requestedCallHex.toLowerCase() !== expectedCallHex.toLowerCase()) {
+        throw new Error("Requested SCALE call differs from the signed Verigate authorization.");
+      }
+      if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
+        throw new Error("Verigate authorization expired before PortalPilot could sign.");
+      }
+
+      const plan = await planAction(intent.action, gatedNetwork);
+      if (plan.callHex.toLowerCase() !== expectedCallHex.toLowerCase()) {
+        throw new Error("PortalPilot signed a different SCALE call than Verigate authorized; refusing to return the plan.");
+      }
+      if (BigInt(plan.feePlanck) > BigInt(authorization.maxFeeBaseUnits) ||
+          plan.warnings.some((warning) => /Fee estimate unavailable/i.test(warning))) {
+        throw new Error("PortalPilot fee estimate is unavailable or exceeds the signed Verigate fee ceiling.");
+      }
+      if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
+        throw new Error("Verigate authorization expired while PortalPilot was preparing the plan.");
+      }
+
+      // Synchronous Map.set is atomic within this process. Multi-instance and serverless
+      // deployments are deliberately disabled until a shared atomic store is implemented.
+      verigatePlans.set(plan.id, {
+        expectedCallHex,
+        authorizationId: authorization.authorizationId,
+        expiresAt: authorization.expiresAt,
+        planCreatedAt: plan.createdAt,
+      });
+      return res.json({ kind: "plan", intent, plan, verigate: {
+        decision: "ALLOW",
+        authorizationId: authorization.authorizationId,
+        expiresAt: authorization.expiresAt,
+        actionSha256: authorization.actionSha256,
+      } });
     }
     if (intent.type === "help") {
       return res.json({ kind: "help", intent, answer: HELP_TEXT, suggestions: SUGGESTIONS });
@@ -203,7 +272,18 @@ app.post("/api/execute", async (req, res) => {
   try {
     const planId = String(req.body?.planId || "");
     if (!planId) return res.status(400).json({ error: "missing planId" });
-    res.json(await executePlan(planId));
+    if (process.env.VERCEL) {
+      throw new Error("Verigate-gated writes are disabled on serverless deployments until a durable atomic authorization store is configured.");
+    }
+    // Consume the authorization before any asynchronous work. Refusals burn the
+    // one-time approval, preventing replay attempts in this process.
+    const authorization = verigatePlans.get(planId);
+    verigatePlans.delete(planId);
+    if (!authorization) throw new Error("No unconsumed Verigate authorization exists for this plan.");
+    if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
+      throw new Error("Verigate authorization expired; the one-time approval has been consumed.");
+    }
+    res.json(await executeAuthorizedPlan(planId, authorization.expectedCallHex));
   } catch (e) {
     res.status(400).json({ error: errMsg(e) });
   }
