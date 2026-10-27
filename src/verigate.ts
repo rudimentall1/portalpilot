@@ -239,8 +239,9 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
     action_type: "portaldot.substrate_transfer",
     target: action.to,
     resource: "",
-    amount: amountBaseUnits,
-    amount_exact: amountBaseUnits,
+    // Verigate policy limits are denominated in human POT units; base units are bound separately in metadata.
+    amount: action.amountPot,
+    amount_exact: action.amountPot,
     asset: "POT",
     network: "portaldot-v3-substrate",
     purpose: "",
@@ -291,7 +292,7 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
       action_type: requestAction.action_type,
       target: requestAction.target,
       resource: requestAction.resource,
-      amount_exact: amountBaseUnits,
+      amount_exact: action.amountPot,
       asset: requestAction.asset,
       network: requestAction.network,
       purpose: requestAction.purpose,
@@ -350,10 +351,12 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
   const recipient = positiveRecipient(map.recipient_ss58);
   if (recipient !== action.to || positiveRecipient(intentMap.recipient_ss58) !== recipient ||
       positiveRecipient(signedAction.target) !== recipient) fail("Requested recipient differs from signed Verigate recipient.");
-  if (positiveInteger(signedAction.amount_exact, "signed amount") !== amountBaseUnits ||
+  if (potToBaseUnits(String(signedAction.amount_exact || "")) !== amountBaseUnits ||
+      potToBaseUnits(String(intent.amount_exact || "")) !== amountBaseUnits ||
+      potToBaseUnits(String(signedAction.amount || "")) !== amountBaseUnits ||
       positiveInteger(map.amount_base_units, "signed metadata amount") !== amountBaseUnits ||
       positiveInteger(intentMap.amount_base_units, "intent metadata amount") !== amountBaseUnits) {
-    fail("Requested amount differs from signed Verigate amount.");
+    fail("Requested POT amount differs from the signed Verigate amount or base-unit binding.");
   }
   const maxFeeBaseUnits = positiveInteger(map.max_fee_base_units, "signed fee ceiling");
   if (maxFeeBaseUnits !== configuredFeeCeiling) fail("Signed fee ceiling differs from the configured PortalPilot fee ceiling.");
