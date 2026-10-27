@@ -191,6 +191,97 @@ export async function planAction(action: WriteAction, network?: string): Promise
   };
 }
 
+// Verigate integration boundary: only the pinned PortalDot V3 Substrate testnet is accepted.
+export const PORTALDOT_TESTNET_RPC = "wss://test-node-v3.portaldot.dev";
+export const PORTALDOT_TESTNET_GENESIS =
+  "0xd4f9acbcf7f52388d8b095abe3c198d19fc510e0343e643e87cfbccb155283bd";
+
+/**
+ * Encode a single native transfer without signing or submitting it.
+ * Amount is exact base units; floating-point values and non-canonical strings are rejected.
+ */
+export async function encodeUnsignedTransferCallHex(
+  recipient: string,
+  amountBaseUnits: string | bigint,
+  network: string = PORTALDOT_TESTNET_RPC
+): Promise<string> {
+  if (network !== PORTALDOT_TESTNET_RPC) {
+    throw new Error("Verigate-gated transfers are restricted to the pinned PortalDot V3 Substrate testnet.");
+  }
+  const amountText = typeof amountBaseUnits === "bigint" ? amountBaseUnits.toString() : amountBaseUnits;
+  if (typeof amountText !== "string" || !/^[1-9][0-9]*$/.test(amountText)) {
+    throw new Error("Transfer amount must be a positive canonical base-unit integer.");
+  }
+  const amount = BigInt(amountText);
+  const api = await getApiWithTimeout(PORTALDOT_TESTNET_RPC);
+  const actualGenesis = api.genesisHash.toHex().toLowerCase();
+  if (actualGenesis !== PORTALDOT_TESTNET_GENESIS) {
+    throw new Error(`PortalDot testnet genesis mismatch: expected ${PORTALDOT_TESTNET_GENESIS}, got ${actualGenesis}.`);
+  }
+  const meta = chainMeta(api);
+  const validation = isValidAddress(recipient, meta.ss58);
+  if (!validation.valid || !validation.normalized) {
+    throw new Error(`Invalid transfer recipient: ${validation.error || "address could not be normalized"}`);
+  }
+  return api.tx.balances.transferKeepAlive(validation.normalized, amount).method.toHex();
+}
+
+/**
+ * Guarded submission primitive. The same cached extrinsic object whose call bytes
+ * are checked is submitted; the cache entry is consumed before send to prevent
+ * concurrent replay within this process. Route-level Verigate authorization and
+ * atomic shared storage are still required.
+ */
+export async function executeAuthorizedPlan(
+  id: string,
+  expectedCallHex: string
+): Promise<Receipt> {
+  if (typeof expectedCallHex !== "string" || !/^0x[0-9a-f]+$/i.test(expectedCallHex)) {
+    throw new Error("A canonical expected SCALE call is required.");
+  }
+  const cached = planCache.get(id);
+  if (!cached) throw new Error("Plan expired or not found. Please re-issue the command.");
+  const api = await getApi(cached.network === "default" ? undefined : cached.network);
+  const current = planCache.get(id);
+  if (!current || current.tx !== cached.tx) {
+    throw new Error("Plan changed while authorization was being checked; refusing execution.");
+  }
+  const actualCallHex = cached.tx.method.toHex();
+  if (actualCallHex.toLowerCase() !== expectedCallHex.toLowerCase()) {
+    throw new Error("Cached extrinsic call differs from Verigate authorization; refusing execution.");
+  }
+  // No await between this deletion and submission: concurrent calls cannot reuse the plan.
+  planCache.delete(id);
+  return new Promise<Receipt>((resolve, reject) => {
+    cached.tx
+      .send((result: any) => {
+        const { status, dispatchError, events, txHash } = result;
+        if (status.isInBlock || status.isFinalized) {
+          const bh = status.isInBlock ? status.asInBlock : status.asFinalized;
+          if (dispatchError) {
+            resolve({
+              ok: false,
+              error: formatDispatchError(api, dispatchError),
+              blockHash: bh.toHex(),
+              txHash: txHash.toHex(),
+              events: [],
+              finalizedAt: Date.now(),
+            });
+          } else {
+            resolve({
+              ok: true,
+              blockHash: bh.toHex(),
+              txHash: txHash.toHex(),
+              events: (events || []).map((e: any) => `${e.event.section}.${e.event.method}`),
+              finalizedAt: Date.now(),
+            });
+          }
+        }
+      })
+      .catch(reject);
+  });
+}
+
 export async function executePlan(id: string): Promise<Receipt> {
   const cached = planCache.get(id);
   if (!cached) throw new Error("Plan expired or not found. Please re-issue the command.");
