@@ -351,6 +351,7 @@ function PlanCard({ msg, plan, onConfirm, onCancel }: any) {
   const dry = plan.dryRun;
   const blocked = dry.ran && !dry.ok;
   const engine = msg.resp?.intent?.engine;
+  const verigate = msg.resp?.verigate;
   const r = msg.receipt;
   const steps = workflowSteps(plan, msg);
   return (
@@ -374,6 +375,7 @@ function PlanCard({ msg, plan, onConfirm, onCancel }: any) {
             {plan.action.amountPot && <Row k="Amount" v={<b>{plan.action.amountPot} POT</b>} />}
             {plan.action.transfers && <Row k="Recipients" v={`${plan.action.transfers.length} accounts`} />}
             {plan.action.message && <Row k="Message" v={`“${plan.action.message}”`} />}
+            {verigate && <Row k="Verigate" v={`ALLOW · ${verigate.authorizationId.slice(0, 12)}… · expires ${new Date(verigate.expiresAt * 1000).toISOString()}`} />}
             <Row k="Signer" v={<Mono s={plan.signer} />} />
             <Row k="Network fee" v={<span className="fee">{plan.feeDisplay}</span>} />
             <Row k="Dry-run" v={dry.detail} />
