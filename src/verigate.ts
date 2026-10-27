@@ -113,6 +113,10 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
   if (!endpoint) fail("VERIGATE_AUTHORIZATION_URL must point to the trusted Verigate authorization adapter.");
   const url = normalizeBaseUrl(endpoint);
   const amountBaseUnits = potToBaseUnits(action.amountPot);
+  const configuredFeeCeiling = String(process.env.VERIGATE_MAX_FEE_BASE_UNITS || "");
+  if (!/^[1-9][0-9]*$/.test(configuredFeeCeiling)) {
+    fail("VERIGATE_MAX_FEE_BASE_UNITS must be configured as a positive base-unit integer before requesting authorization.");
+  }
   const requestAction = {
     action_type: "portaldot.substrate_transfer",
     target: action.to,
@@ -123,7 +127,7 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
       portaldot_substrate_v3: {
         recipient_ss58: action.to,
         amount_base_units: amountBaseUnits,
-        max_fee_base_units: process.env.VERIGATE_MAX_FEE_BASE_UNITS || "",
+        max_fee_base_units: configuredFeeCeiling,
         genesis_hash: PORTALDOT_TESTNET_GENESIS,
       },
     },
