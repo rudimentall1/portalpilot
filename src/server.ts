@@ -283,7 +283,7 @@ app.post("/api/execute", async (req, res) => {
     if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
       throw new Error("Verigate authorization expired; the one-time approval has been consumed.");
     }
-    res.json(await executeAuthorizedPlan(planId, authorization.expectedCallHex));
+    res.json(await executeAuthorizedPlan(planId, authorization.expectedCallHex, authorization.expiresAt));
   } catch (e) {
     res.status(400).json({ error: errMsg(e) });
   }
