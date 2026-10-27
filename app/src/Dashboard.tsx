@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { Icon, ThemeToggle } from "./ui";
 
-type Network = "mainnet" | "local";
+type Network = "mainnet" | "local" | "testnet";
 type Msg = {
   id: number;
   role: "user" | "assistant";
@@ -169,6 +169,7 @@ function Header({ network, setNetwork, chain, chainErr, llm, onHome }: any) {
         </div>
         <div className="seg">
           <button className={network === "mainnet" ? "active" : ""} onClick={() => setNetwork("mainnet")}>Mainnet</button>
+          <button className={network === "testnet" ? "active" : ""} onClick={() => setNetwork("testnet")}>Testnet</button>
           <button className={network === "local" ? "active" : ""} onClick={() => setNetwork("local")}>Local</button>
         </div>
         <ThemeToggle />
