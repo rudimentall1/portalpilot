@@ -113,20 +113,38 @@ export interface VerifiedAuthorization {
 
 export async function requestAndVerifyAuthorization(action: { to: string; amountPot: string }): Promise<VerifiedAuthorization> {
   if (process.env.VERCEL) fail("Verigate-gated writes are disabled on serverless deployments until a durable atomic authorization store is configured.");
-  const endpoint = process.env.VERIGATE_AUTHORIZATION_URL;
-  if (!endpoint) fail("VERIGATE_AUTHORIZATION_URL must point to the trusted Verigate authorization adapter.");
-  const url = normalizeBaseUrl(endpoint);
+  const base = normalizeBaseUrl(process.env.VERIGATE_BASE_URL || "");
+  const identityId = String(process.env.VERIGATE_IDENTITY_ID || "");
+  const capabilityId = String(process.env.VERIGATE_CAPABILITY_ID || "");
+  const agentId = String(process.env.VERIGATE_AGENT_ID || "");
+  const privateKeyPath = process.env.VERIGATE_AGENT_PRIVATE_KEY_FILE;
+  if (!/^[a-f0-9]{64}$/i.test(identityId)) fail("VERIGATE_IDENTITY_ID must be the registered Ed25519 identity fingerprint.");
+  if (!capabilityId || !agentId) fail("VERIGATE_CAPABILITY_ID and VERIGATE_AGENT_ID are required.");
+  if (!privateKeyPath) fail("VERIGATE_AGENT_PRIVATE_KEY_FILE must point to the server-side agent Ed25519 private key.");
+
   const amountBaseUnits = potToBaseUnits(action.amountPot);
   const configuredFeeCeiling = String(process.env.VERIGATE_MAX_FEE_BASE_UNITS || "");
   if (!/^[1-9][0-9]*$/.test(configuredFeeCeiling)) {
     fail("VERIGATE_MAX_FEE_BASE_UNITS must be configured as a positive base-unit integer before requesting authorization.");
   }
+  const intentId = crypto.randomUUID();
+  const timestamp = Date.now() / 1000;
   const requestAction = {
+    intent_id: intentId,
+    agent_id: agentId,
     action_type: "portaldot.substrate_transfer",
     target: action.to,
+    resource: "",
+    amount: amountBaseUnits,
     amount_exact: amountBaseUnits,
     asset: "POT",
     network: "portaldot-v3-substrate",
+    purpose: "",
+    declared_context: {},
+    input_provenance: {},
+    parent_intent_id: null,
+    requested_capability: null,
+    constraints: {},
     metadata: {
       portaldot_substrate_v3: {
         recipient_ss58: action.to,
@@ -135,25 +153,64 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
         genesis_hash: PORTALDOT_TESTNET_GENESIS,
       },
     },
+    timestamp,
   };
-  const response = await fetch(url, {
+
+  // Match Verigate's core.identity.sign_action_intent canonical payload exactly.
+  const privateKey = crypto.createPrivateKey(fs.readFileSync(privateKeyPath));
+  if (privateKey.asymmetricKeyType !== "ed25519") fail("Verigate agent signing key must be Ed25519.");
+  const publicKey = crypto.createPublicKey(privateKey);
+  const publicDer = publicKey.export({ type: "spki", format: "der" });
+  if (publicDer.length !== 44) fail("Unexpected Ed25519 public-key encoding.");
+  const rawPublicKey = publicDer.subarray(publicDer.length - 32);
+  const actualIdentityId = crypto.createHash("sha256").update(rawPublicKey).digest("hex");
+  if (actualIdentityId !== identityId.toLowerCase()) {
+    fail("VERIGATE_AGENT_PRIVATE_KEY_FILE does not match VERIGATE_IDENTITY_ID.");
+  }
+  const signedPayload = { identity_id: identityId, action: requestAction };
+  const agentSignature = crypto.sign(null, Buffer.from(canonicalJson(signedPayload), "utf8"), privateKey).toString("base64");
+
+  const response = await fetch(new URL("/v1/actions/authorize", base), {
     method: "POST",
     redirect: "error",
     headers: {
       "content-type": "application/json",
       ...(process.env.VERIGATE_API_KEY ? { "x-api-key": process.env.VERIGATE_API_KEY } : {}),
     },
-    body: JSON.stringify({ action: requestAction }),
+    body: JSON.stringify({
+      identity_id: identityId,
+      capability_id: capabilityId,
+      agent_id: agentId,
+      agent_signature: agentSignature,
+      intent_id: intentId,
+      timestamp,
+      action_type: requestAction.action_type,
+      target: requestAction.target,
+      resource: requestAction.resource,
+      amount_exact: amountBaseUnits,
+      asset: requestAction.asset,
+      network: requestAction.network,
+      purpose: requestAction.purpose,
+      declared_context: requestAction.declared_context,
+      parent_intent_id: requestAction.parent_intent_id,
+      requested_capability: requestAction.requested_capability,
+      constraints: requestAction.constraints,
+      metadata: requestAction.metadata,
+    }),
     signal: AbortSignal.timeout(10000),
   });
-  if (!response.ok) fail("Verigate authorization adapter returned HTTP " + response.status + ".");
+  if (!response.ok) fail("Verigate /v1/actions/authorize returned HTTP " + response.status + ".");
   const artifacts: any = await response.json();
   const receipt = artifacts?.decision_receipt;
   const authorization = artifacts?.execution_authorization;
-  if (!receipt?.payload || !authorization?.payload) fail("Verigate response must contain both signed artifacts.");
+  if (!receipt?.payload) fail("Verigate response must contain a signed decision receipt.");
   verifyLocally(receipt);
-  verifyLocally(authorization);
   await verifyRemotely(receipt);
+  if (receipt.payload?.decision?.decision !== "ALLOW") {
+    fail("Verigate denied this action: " + String(receipt.payload?.decision?.decision || "no decision") + ".");
+  }
+  if (!authorization?.payload) fail("Verigate ALLOW response must contain a signed execution authorization.");
+  verifyLocally(authorization);
   await verifyRemotely(authorization);
 
   const rp = receipt.payload;
@@ -170,7 +227,8 @@ export async function requestAndVerifyAuthorization(action: { to: string; amount
   const expectedId = crypto.createHash("sha256").update(String(receipt.signature) + String(ap.nonce)).digest("hex");
   if (String(ap.authorization_id || "").toLowerCase() !== expectedId) fail("Verigate authorization ID mismatch.");
   if (ap.policy_sha256 !== rp.policy_sha256) fail("Verigate policy digest mismatch.");
-  if (String(ap.action_sha256 || "").toLowerCase() !== digest(signedAction) ||
+  if (!/^[a-f0-9]{64}$/i.test(String(ap.action_sha256 || "")) ||
+      String(ap.action_sha256).toLowerCase() !== digest(signedAction) ||
       digest(signedAction) !== digest(intent)) fail("Verigate signed action digest mismatch.");
   for (const field of ["intent_id", "agent_id", "action_type", "target", "amount_exact", "asset", "network"]) {
     if ((signedAction[field] ?? null) !== (intent[field] ?? null)) fail("Signed intent mismatch on " + field + ".");
