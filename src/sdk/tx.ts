@@ -287,6 +287,11 @@ export async function executeAuthorizedPlan(
 }
 
 export async function executePlan(id: string): Promise<Receipt> {
+  // Defense in depth: never allow callers to bypass the route-level Verigate gate
+  // when the integration is enabled, or from a serverless deployment.
+  if (process.env.VERCEL || process.env.VERIGATE_SINGLE_PROCESS_MODE === "true") {
+    throw new Error("Unguarded executePlan is disabled in Verigate or serverless mode; use executeAuthorizedPlan.");
+  }
   const cached = planCache.get(id);
   if (!cached) throw new Error("Plan expired or not found. Please re-issue the command.");
   const api = await getApi(cached.network === "default" ? undefined : cached.network);
