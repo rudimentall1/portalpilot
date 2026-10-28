@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { executePlan } from "../src/sdk/tx.ts";
 
 // Import without starting PortalPilot's normal listener; this test owns an ephemeral server.
 process.env.VERCEL = "1";
@@ -35,4 +36,23 @@ test("contract deployment cannot bypass the Verigate native-transfer gate", asyn
   const response = await postAsk("deploy flipper contract");
   assert.equal(response.status, 200);
   assert.match(response.body.answer, /Verigate integration blocks ink! contract deployment/);
+});
+
+
+test("unguarded SDK execution is disabled when Verigate mode is enabled", async () => {
+  const previousVercel = process.env.VERCEL;
+  const previousMode = process.env.VERIGATE_SINGLE_PROCESS_MODE;
+  delete process.env.VERCEL;
+  process.env.VERIGATE_SINGLE_PROCESS_MODE = "true";
+  try {
+    await assert.rejects(
+      executePlan("not-a-real-plan"),
+      /Unguarded executePlan is disabled in Verigate or serverless mode/,
+    );
+  } finally {
+    if (previousVercel === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = previousVercel;
+    if (previousMode === undefined) delete process.env.VERIGATE_SINGLE_PROCESS_MODE;
+    else process.env.VERIGATE_SINGLE_PROCESS_MODE = previousMode;
+  }
 });
