@@ -196,6 +196,14 @@ export const PORTALDOT_TESTNET_RPC = "wss://test-node-v3.portaldot.dev";
 export const PORTALDOT_TESTNET_GENESIS =
   "0xd4f9acbcf7f52388d8b095abe3c198d19fc510e0343e643e87cfbccb155283bd";
 
+/** Refuse a PortalDot testnet operation if the connected endpoint is another chain. */
+export function assertPortalDotTestnetGenesis(api: Pick<ApiPromise, "genesisHash">): void {
+  const actualGenesis = api.genesisHash.toHex().toLowerCase();
+  if (actualGenesis !== PORTALDOT_TESTNET_GENESIS) {
+    throw new Error(`PortalDot testnet genesis mismatch: expected ${PORTALDOT_TESTNET_GENESIS}, got ${actualGenesis}.`);
+  }
+}
+
 /**
  * Encode a single native transfer without signing or submitting it.
  * Amount is exact base units; floating-point values and non-canonical strings are rejected.
@@ -214,10 +222,7 @@ export async function encodeUnsignedTransferCallHex(
   }
   const amount = BigInt(amountText);
   const api = await getApiWithTimeout(PORTALDOT_TESTNET_RPC);
-  const actualGenesis = api.genesisHash.toHex().toLowerCase();
-  if (actualGenesis !== PORTALDOT_TESTNET_GENESIS) {
-    throw new Error(`PortalDot testnet genesis mismatch: expected ${PORTALDOT_TESTNET_GENESIS}, got ${actualGenesis}.`);
-  }
+  assertPortalDotTestnetGenesis(api);
   const meta = chainMeta(api);
   const validation = isValidAddress(recipient, meta.ss58);
   if (!validation.valid || !validation.normalized) {
@@ -243,6 +248,7 @@ export async function executeAuthorizedPlan(
   const cached = planCache.get(id);
   if (!cached) throw new Error("Plan expired or not found. Please re-issue the command.");
   const api = await getApi(cached.network === "default" ? undefined : cached.network);
+  if (cached.network === PORTALDOT_TESTNET_RPC) assertPortalDotTestnetGenesis(api);
   if (expiresAt !== undefined && (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000))) {
     throw new Error("Verigate authorization expired immediately before submission; refusing execution.");
   }
