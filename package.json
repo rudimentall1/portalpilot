@@ -14,7 +14,8 @@
     "build:web": "npm --prefix app run build",
     "build:api": "node scripts/build-api.mjs",
     "smoke": "tsx src/smoke.ts",
-    "spike": "node spike.mjs"
+    "spike": "node spike.mjs",
+    "test:verigate": "tsx --test tests/verigate-*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

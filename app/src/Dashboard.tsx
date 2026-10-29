@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { Icon, ThemeToggle } from "./ui";
 
-type Network = "mainnet" | "local";
+type Network = "mainnet" | "local" | "testnet";
 type Msg = {
   id: number;
   role: "user" | "assistant";
@@ -110,8 +110,16 @@ export default function Dashboard({ onHome }: { onHome?: () => void }) {
     }
   }
 
-  function cancelPlan(msgId: number) {
-    setMessages((m) => m.map((x) => (x.id === msgId ? { ...x, receipt: { cancelled: true } } : x)));
+  async function cancelPlan(msgId: number, planId: string) {
+    setMessages((m) => m.map((x) => (x.id === msgId ? { ...x, executing: true } : x)));
+    try {
+      await api.cancel(planId);
+      setMessages((m) => m.map((x) => (x.id === msgId ? { ...x, executing: false, receipt: { cancelled: true } } : x)));
+    } catch (e: any) {
+      setMessages((m) => m.map((x) => (x.id === msgId ? {
+        ...x, executing: false, receipt: { ok: false, error: "Cancellation failed: " + (e?.message || "request failed") }
+      } : x)));
+    }
   }
 
   return (
@@ -169,6 +177,7 @@ function Header({ network, setNetwork, chain, chainErr, llm, onHome }: any) {
         </div>
         <div className="seg">
           <button className={network === "mainnet" ? "active" : ""} onClick={() => setNetwork("mainnet")}>Mainnet</button>
+          <button className={network === "testnet" ? "active" : ""} onClick={() => setNetwork("testnet")}>Testnet</button>
           <button className={network === "local" ? "active" : ""} onClick={() => setNetwork("local")}>Local</button>
         </div>
         <ThemeToggle />
@@ -342,6 +351,7 @@ function PlanCard({ msg, plan, onConfirm, onCancel }: any) {
   const dry = plan.dryRun;
   const blocked = dry.ran && !dry.ok;
   const engine = msg.resp?.intent?.engine;
+  const verigate = msg.resp?.verigate;
   const r = msg.receipt;
   const steps = workflowSteps(plan, msg);
   return (
@@ -365,6 +375,7 @@ function PlanCard({ msg, plan, onConfirm, onCancel }: any) {
             {plan.action.amountPot && <Row k="Amount" v={<b>{plan.action.amountPot} POT</b>} />}
             {plan.action.transfers && <Row k="Recipients" v={`${plan.action.transfers.length} accounts`} />}
             {plan.action.message && <Row k="Message" v={`“${plan.action.message}”`} />}
+            {verigate && <Row k="Verigate" v={`ALLOW · ${verigate.authorizationId.slice(0, 12)}… · expires ${new Date(verigate.expiresAt * 1000).toISOString()}`} />}
             <Row k="Signer" v={<Mono s={plan.signer} />} />
             <Row k="Network fee" v={<span className="fee">{plan.feeDisplay}</span>} />
             <Row k="Dry-run" v={dry.detail} />
@@ -374,7 +385,7 @@ function PlanCard({ msg, plan, onConfirm, onCancel }: any) {
             <div className="warn">{plan.warnings.map((w: string, i: number) => <div key={i}>⚠ {w}</div>)}</div>
           )}
           <div className="plan-actions">
-            <button className="btn ghost" disabled={msg.executing} onClick={() => onCancel(msg.id)}>Cancel</button>
+            <button className="btn ghost" disabled={msg.executing} onClick={() => onCancel(msg.id, plan.id)}>Cancel</button>
             <button
               className="btn primary"
               disabled={msg.executing || blocked}

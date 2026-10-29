@@ -6,11 +6,15 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { getChainInfo, getAccount, recentBlocks, recentTransfers, NETWORKS } from "./sdk/index";
-import { planAction, executePlan, estimateFee } from "./sdk/tx";
+import {
+  planAction, executePlan, estimateFee, encodeUnsignedTransferCallHex,
+  executeAuthorizedPlan, discardPlan, PORTALDOT_TESTNET_RPC,
+} from "./sdk/tx";
+import { requestAndVerifyAuthorization, consumeExecutionAuthorization } from "./verigate";
 import { shortAddr } from "./sdk/format";
 import { understand, hasLLM } from "./intent/index";
 import { DEV_ADDRESSES } from "./intent/types";
-import { flipperAvailable, deployFlipper, flipFlipper, readFlipper } from "./sdk/contracts";
+import { readFlipper } from "./sdk/contracts";
 
 // Quiet two benign @polkadot/api init warnings so demo logs stay clean.
 const _warn = console.warn.bind(console);
@@ -22,9 +26,43 @@ console.warn = (...a: any[]) => {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.use(cors());
-app.use(express.json());
 const PORT = Number(process.env.PORT || 8787);
+const VERIGATE_LOCAL_MODE = process.env.VERIGATE_SINGLE_PROCESS_MODE === "true";
+const VERIGATE_ALLOWED_ORIGINS = new Set(
+  (process.env.PORTALPILOT_ALLOWED_ORIGINS ||
+    "http://127.0.0.1:8787,http://localhost:8787")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+
+// In the local Verigate execution mode, do not expose the signing surface to arbitrary
+// websites. CORS alone is not a request firewall, so reject unapproved Origin headers first.
+if (VERIGATE_LOCAL_MODE) {
+  app.use((req, res, next) => {
+    const origin = req.get("Origin");
+    if (origin && !VERIGATE_ALLOWED_ORIGINS.has(origin)) {
+      return res.status(403).json({ error: "Origin not allowed in local Verigate mode." });
+    }
+    next();
+  });
+  app.use(cors({
+    origin: (origin, callback) => callback(null, !origin || VERIGATE_ALLOWED_ORIGINS.has(origin)),
+  }));
+} else {
+  app.use(cors());
+}
+app.use(express.json());
+
+// Process-local, one-time bindings. The Verigate gate explicitly refuses Vercel/serverless
+// because this Map is not a durable atomic store across instances or restarts.
+const verigatePlans = new Map<string, {
+  expectedCallHex: string;
+  authorizationId: string;
+  expiresAt: number;
+  planCreatedAt: number;
+  executionAuthorization: { payload: Record<string, unknown>; signature: string; algorithm: "Ed25519" };
+}>();
 
 const errMsg = (e: any) => e?.message || String(e);
 
@@ -155,16 +193,10 @@ app.post("/api/ask", async (req, res) => {
         res.json({ kind: "read", intent: { type: "read", engine: "rules" }, answer: a, view: "none", data });
       try {
         if (/\b(deploy|instantiate|launch|create|new)\b/.test(lc0)) {
-          if (!flipperAvailable())
-            return say(
-              "ink! deploy is wired to this node's legacy pallet-contracts (rent-based, weights-v1). Drop an ink! ~3.0-compatible build at contracts/flipper/ (flipper.contract, or flipper.wasm + flipper.json), then say “deploy flipper” again. Note: a modern ink! 5 build would be rejected by this node."
-            );
-          const d = await deployFlipper(network);
-          return say(`Deployed the flipper ink! contract on Portaldot at ${d.address} (block ${d.block.slice(0, 12)}…). Now try “flip the contract” or “read the flipper”.`, d);
+          throw new Error("Verigate integration blocks ink! contract deployment: only a single native POT transfer is currently supported by the authorization gate.");
         }
         if (/\bflip\b/.test(lc0)) {
-          const f = await flipFlipper(network);
-          return say(`Flipped the contract — block ${f.block.slice(0, 12)}…. Say “read the flipper” to see the new value.`, f);
+          throw new Error("Verigate integration blocks ink! contract writes: only a single native POT transfer is currently supported by the authorization gate.");
         }
         if (/\b(read|get|value|state|current|show)\b/.test(lc0)) {
           const v = await readFlipper(network);
@@ -182,8 +214,76 @@ app.post("/api/ask", async (req, res) => {
       return res.json({ kind: "read", intent, ...r });
     }
     if (intent.type === "write") {
-      const plan = await planAction(intent.action, network);
-      return res.json({ kind: "plan", intent, plan });
+      // The current Verigate adapter authorizes only one native POT transfer.
+      // Other writes fail closed rather than falling back to the unguarded planner.
+      if (intent.action.kind !== "transfer") {
+        throw new Error("Verigate gate currently supports only a single native POT transfer. Batch transfers and remarks are blocked.");
+      }
+      if (network && network !== PORTALDOT_TESTNET_RPC && network !== "testnet") {
+        throw new Error("Verigate-gated writes are restricted to PortalDot V3 Testnet. Select Testnet, not Mainnet or Local.");
+      }
+      if (process.env.VERCEL || process.env.VERIGATE_SINGLE_PROCESS_MODE !== "true") {
+        throw new Error("Verigate-gated writes require explicit VERIGATE_SINGLE_PROCESS_MODE=true on a single-process local deployment; serverless and unconfirmed multi-instance deployments are disabled.");
+      }
+      const gatedNetwork = PORTALDOT_TESTNET_RPC;
+      const transactionSeed = String(process.env.PORTALDOT_SIGNER_SEED || "").trim();
+      if (!transactionSeed || transactionSeed.startsWith("//")) {
+        throw new Error("Set PORTALDOT_SIGNER_SEED to a funded, non-development PortalDot V3 testnet account. Built-in //Alice-style dev keys are refused.");
+      }
+
+      // Verify Verigate's signed decision + execution authorization before planAction(),
+      // which signs the Substrate extrinsic.
+      const authorization = await requestAndVerifyAuthorization(intent.action);
+      const expectedCallHex = await encodeUnsignedTransferCallHex(
+        authorization.recipient, authorization.amountBaseUnits, gatedNetwork
+      );
+      const requestedCallHex = await encodeUnsignedTransferCallHex(
+        intent.action.to,
+        // Use the signed base-unit amount so the exact encoded call is compared.
+        authorization.amountBaseUnits,
+        gatedNetwork
+      );
+      if (requestedCallHex.toLowerCase() !== expectedCallHex.toLowerCase()) {
+        throw new Error("Requested SCALE call differs from the signed Verigate authorization.");
+      }
+      if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
+        throw new Error("Verigate authorization expired before PortalPilot could sign.");
+      }
+
+      const plan = await planAction(intent.action, gatedNetwork);
+      if (plan.callHex.toLowerCase() !== expectedCallHex.toLowerCase()) {
+        discardPlan(plan.id);
+        throw new Error("PortalPilot signed a different SCALE call than Verigate authorized; refusing to return the plan.");
+      }
+      if (BigInt(plan.feePlanck) > BigInt(authorization.maxFeeBaseUnits) ||
+          plan.warnings.some((warning) => /Fee estimate unavailable/i.test(warning))) {
+        discardPlan(plan.id);
+        throw new Error("PortalPilot fee estimate is unavailable or exceeds the signed Verigate fee ceiling.");
+      }
+      if (plan.dryRun.ran && !plan.dryRun.ok) {
+        discardPlan(plan.id);
+        throw new Error("PortalPilot dry-run predicts that this authorized transaction will fail: " + plan.dryRun.detail);
+      }
+      if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
+        discardPlan(plan.id);
+        throw new Error("Verigate authorization expired while PortalPilot was preparing the plan.");
+      }
+
+      // Synchronous Map.set is atomic within this process. Multi-instance and serverless
+      // deployments are deliberately disabled until a shared atomic store is implemented.
+      verigatePlans.set(plan.id, {
+        expectedCallHex,
+        authorizationId: authorization.authorizationId,
+        expiresAt: authorization.expiresAt,
+        planCreatedAt: plan.createdAt,
+        executionAuthorization: authorization.executionAuthorization,
+      });
+      return res.json({ kind: "plan", intent, plan, verigate: {
+        decision: "ALLOW",
+        authorizationId: authorization.authorizationId,
+        expiresAt: authorization.expiresAt,
+        actionSha256: authorization.actionSha256,
+      } });
     }
     if (intent.type === "help") {
       return res.json({ kind: "help", intent, answer: HELP_TEXT, suggestions: SUGGESTIONS });
@@ -199,11 +299,34 @@ app.post("/api/ask", async (req, res) => {
   }
 });
 
+app.post("/api/cancel", (req, res) => {
+  const planId = String(req.body?.planId || "");
+  if (!planId) return res.status(400).json({ error: "missing planId" });
+  // Cancellation consumes the authorization and discards the cached signed extrinsic.
+  verigatePlans.delete(planId);
+  discardPlan(planId);
+  return res.json({ ok: true, cancelled: true });
+});
+
 app.post("/api/execute", async (req, res) => {
   try {
     const planId = String(req.body?.planId || "");
     if (!planId) return res.status(400).json({ error: "missing planId" });
-    res.json(await executePlan(planId));
+    if (process.env.VERCEL || process.env.VERIGATE_SINGLE_PROCESS_MODE !== "true") {
+      throw new Error("Verigate-gated writes require explicit VERIGATE_SINGLE_PROCESS_MODE=true on a single-process local deployment; serverless and unconfirmed multi-instance deployments are disabled.");
+    }
+    // Consume the authorization before any asynchronous work. Refusals burn the
+    // one-time approval, preventing replay attempts in this process.
+    const authorization = verigatePlans.get(planId);
+    verigatePlans.delete(planId);
+    if (!authorization) throw new Error("No unconsumed Verigate authorization exists for this plan.");
+    if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
+      throw new Error("Verigate authorization expired; the one-time approval has been consumed.");
+    }
+    // Consume the signed authorization in Verigate's durable nonce store before any broadcast.
+    // If the endpoint is unavailable or rejects the authorization, fail closed without submitting.
+    await consumeExecutionAuthorization(authorization.executionAuthorization);
+    res.json(await executeAuthorizedPlan(planId, authorization.expectedCallHex, authorization.expiresAt));
   } catch (e) {
     res.status(400).json({ error: errMsg(e) });
   }
@@ -220,9 +343,12 @@ if (!process.env.VERCEL && fs.existsSync(dist)) {
 // Listen only when run directly (local dev / `npm start`). On Vercel the app is
 // imported by api/index.ts and invoked per request as a serverless function.
 if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
+  const onListening = () => {
     console.log(`PortalPilot backend → http://127.0.0.1:${PORT}  (LLM: ${hasLLM() ? "on" : "off/deterministic"})`);
-  });
+  };
+  // The process-local Verigate plan cache is supported only on this machine.
+  if (VERIGATE_LOCAL_MODE) app.listen(PORT, "127.0.0.1", onListening);
+  else app.listen(PORT, onListening);
 }
 
 export default app;
