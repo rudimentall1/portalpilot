@@ -9,6 +9,10 @@ import {
   consumeExecutionAuthorization,
   requestAndVerifyAuthorization,
 } from "../src/verigate.ts";
+import {
+  assertPortalDotTestnetGenesis,
+  PORTALDOT_TESTNET_GENESIS,
+} from "../src/sdk/tx.ts";
 
 const recipient = "5GrwvaEF5zXb26Fz9rcQpDWS7Q7f6B8e4pK5s7c8f9gH2j3k";
 const policyHash = "a".repeat(64);
@@ -186,4 +190,17 @@ test("fails closed when signed execution action differs from the decision receip
       /signed action digest mismatch/,
     );
   });
+});
+
+
+test("pinned PortalDot genesis check accepts only the expected testnet", () => {
+  const api = (genesis: string) => ({
+    genesisHash: { toHex: () => genesis },
+  }) as any;
+
+  assert.doesNotThrow(() => assertPortalDotTestnetGenesis(api(PORTALDOT_TESTNET_GENESIS)));
+  assert.throws(
+    () => assertPortalDotTestnetGenesis(api("0x" + "ab".repeat(32))),
+    /PortalDot testnet genesis mismatch/,
+  );
 });
