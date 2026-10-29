@@ -84,3 +84,43 @@ test("concurrent attempts cannot take the same one-time plan twice", async () =>
   assert.equal(results.filter((r) => r.status === "rejected").length, 1);
   assert.equal(sends, 1);
 });
+
+
+test("missing or already-consumed plan never calls consume or submit", async () => {
+  let consumes = 0;
+  let sends = 0;
+  await assert.rejects(
+    executeAuthorizedOnce(
+      "unknown-plan",
+      takeOnceStore(undefined),
+      async () => { consumes += 1; },
+      async () => { sends += 1; return "submitted"; },
+      1_900_000_000,
+    ),
+    /No unconsumed Verigate plan/,
+  );
+  assert.equal(consumes, 0);
+  assert.equal(sends, 0);
+});
+
+test("failed submission cannot reuse the consumed local plan", async () => {
+  let consumes = 0;
+  let sends = 0;
+  const take = takeOnceStore(pending());
+  const consume = async () => { consumes += 1; };
+  const submit = async () => {
+    sends += 1;
+    throw new Error("submit failed");
+  };
+
+  await assert.rejects(
+    executeAuthorizedOnce("plan-1", take, consume, submit, 1_900_000_000),
+    /submit failed/,
+  );
+  await assert.rejects(
+    executeAuthorizedOnce("plan-1", take, consume, submit, 1_900_000_000),
+    /No unconsumed Verigate plan/,
+  );
+  assert.equal(consumes, 1);
+  assert.equal(sends, 1);
+});
