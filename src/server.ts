@@ -11,6 +11,7 @@ import {
   executeAuthorizedPlan, discardPlan, PORTALDOT_TESTNET_RPC,
 } from "./sdk/tx";
 import { requestAndVerifyAuthorization, consumeExecutionAuthorization } from "./verigate";
+import { executeAuthorizedOnce } from "./verigate-execution";
 import { shortAddr } from "./sdk/format";
 import { understand, hasLLM } from "./intent/index";
 import { DEV_ADDRESSES } from "./intent/types";
@@ -315,18 +316,20 @@ app.post("/api/execute", async (req, res) => {
     if (process.env.VERCEL || process.env.VERIGATE_SINGLE_PROCESS_MODE !== "true") {
       throw new Error("Verigate-gated writes require explicit VERIGATE_SINGLE_PROCESS_MODE=true on a single-process local deployment; serverless and unconfirmed multi-instance deployments are disabled.");
     }
-    // Consume the authorization before any asynchronous work. Refusals burn the
-    // one-time approval, preventing replay attempts in this process.
-    const authorization = verigatePlans.get(planId);
-    verigatePlans.delete(planId);
-    if (!authorization) throw new Error("No unconsumed Verigate authorization exists for this plan.");
-    if (authorization.expiresAt <= Math.floor(Date.now() / 1000)) {
-      throw new Error("Verigate authorization expired; the one-time approval has been consumed.");
-    }
-    // Consume the signed authorization in Verigate's durable nonce store before any broadcast.
-    // If the endpoint is unavailable or rejects the authorization, fail closed without submitting.
-    await consumeExecutionAuthorization(authorization.executionAuthorization);
-    res.json(await executeAuthorizedPlan(planId, authorization.expectedCallHex, authorization.expiresAt));
+    // The helper synchronously removes the local one-time binding before awaiting
+    // durable Verigate consumption, then calls the guarded submitter only on success.
+    const receipt = await executeAuthorizedOnce(
+      planId,
+      (id) => {
+        const authorization = verigatePlans.get(id);
+        verigatePlans.delete(id);
+        return authorization;
+      },
+      consumeExecutionAuthorization,
+      (id, expectedCallHex, expiresAt) =>
+        executeAuthorizedPlan(id, expectedCallHex, expiresAt),
+    );
+    return res.json(receipt);
   } catch (e) {
     res.status(400).json({ error: errMsg(e) });
   }
