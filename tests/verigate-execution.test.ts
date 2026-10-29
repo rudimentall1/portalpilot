@@ -97,7 +97,7 @@ test("missing or already-consumed plan never calls consume or submit", async () 
       async () => { sends += 1; return "submitted"; },
       1_900_000_000,
     ),
-    /No unconsumed Verigate plan/,
+    /No unconsumed Verigate authorization/,
   );
   assert.equal(consumes, 0);
   assert.equal(sends, 0);
@@ -119,7 +119,7 @@ test("failed submission cannot reuse the consumed local plan", async () => {
   );
   await assert.rejects(
     executeAuthorizedOnce("plan-1", take, consume, submit, 1_900_000_000),
-    /No unconsumed Verigate plan/,
+    /No unconsumed Verigate authorization/,
   );
   assert.equal(consumes, 1);
   assert.equal(sends, 1);
