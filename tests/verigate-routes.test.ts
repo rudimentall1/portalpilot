@@ -54,6 +54,12 @@ test("local Verigate mode rejects browser requests from unapproved origins", asy
   assert.match(response.body.error, /Origin not allowed in local Verigate mode/);
 });
 
+test("local Verigate mode permits the configured local browser origin", async () => {
+  const response = await postAsk("what can I do?", "http://localhost:8787");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.kind, "help");
+});
+
 test("contract flip command cannot bypass the Verigate native-transfer gate", async () => {
   const response = await postAsk("flip the contract");
   assert.equal(response.status, 200);
