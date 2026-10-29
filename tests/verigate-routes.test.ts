@@ -5,17 +5,20 @@ import { executePlan } from "../src/sdk/tx.ts";
 
 // Import without starting PortalPilot's normal listener; this test owns an ephemeral server.
 process.env.VERCEL = "1";
+process.env.VERIGATE_SINGLE_PROCESS_MODE = "true";
 const { app } = await import("../src/server.ts");
 
-async function postAsk(text: string): Promise<{ status: number; body: any }> {
+async function postAsk(text: string, origin?: string): Promise<{ status: number; body: any }> {
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Test server did not bind a TCP port.");
   try {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (origin) headers.origin = origin;
     const response = await fetch(`http://127.0.0.1:${address.port}/api/ask`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify({ text, network: "testnet" }),
     });
     return { status: response.status, body: await response.json() };
@@ -44,6 +47,12 @@ async function postExecute(planId: string): Promise<{ status: number; body: any 
     );
   }
 }
+
+test("local Verigate mode rejects browser requests from unapproved origins", async () => {
+  const response = await postAsk("network status", "https://attacker.example");
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /Origin not allowed in local Verigate mode/);
+});
 
 test("contract flip command cannot bypass the Verigate native-transfer gate", async () => {
   const response = await postAsk("flip the contract");
