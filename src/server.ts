@@ -26,6 +26,15 @@ console.warn = (...a: any[]) => {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+const PORT = Number(process.env.PORT || 8787);
+const VERIGATE_LOCAL_MODE = process.env.VERIGATE_SINGLE_PROCESS_MODE === "true";
+const VERIGATE_ALLOWED_ORIGINS = new Set(
+  (process.env.PORTALPILOT_ALLOWED_ORIGINS ||
+    "http://127.0.0.1:8787,http://localhost:8787")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
 
 // In the local Verigate execution mode, do not expose the signing surface to arbitrary
 // websites. CORS alone is not a request firewall, so reject unapproved Origin headers first.
@@ -44,15 +53,6 @@ if (VERIGATE_LOCAL_MODE) {
   app.use(cors());
 }
 app.use(express.json());
-const PORT = Number(process.env.PORT || 8787);
-const VERIGATE_LOCAL_MODE = process.env.VERIGATE_SINGLE_PROCESS_MODE === "true";
-const VERIGATE_ALLOWED_ORIGINS = new Set(
-  (process.env.PORTALPILOT_ALLOWED_ORIGINS ||
-    "http://127.0.0.1:8787,http://localhost:8787")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean)
-);
 
 // Process-local, one-time bindings. The Verigate gate explicitly refuses Vercel/serverless
 // because this Map is not a durable atomic store across instances or restarts.
